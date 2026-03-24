@@ -195,16 +195,36 @@ store-credit-aggregator/
 ├── cli.py                  # CLI logic, argument parsing, Rich output
 ├── config.py               # Read/write ~/.credit-checker/config.json
 ├── scrapers/
-│   ├── __init__.py         # Store registry
-│   ├── base.py             # Shared helpers (BinderPOS widget, new Shopify accounts)
-│   ├── realmhoppers.py
-│   ├── eacollectibles.py
-│   ├── manalounge.py
-│   └── playerscandc.py
+│   ├── __init__.py         # Store registry (STORE_NAMES, BASE_URLS, _SCRAPER_CLASSES)
+│   ├── base.py             # BaseScraper ABC + shared helpers
+│   ├── realmhoppers.py     # New Shopify accounts
+│   ├── eacollectibles.py   # New Shopify accounts
+│   ├── manalounge.py       # BinderPOS on Shopify
+│   └── playerscandc.py     # Custom platform
 ├── diagnose.py             # Debug tool — dumps DOM/iframe contents per store
 ├── requirements.txt
 └── README.md
 ```
+
+### Development setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+playwright install chromium
+```
+
+### Scraper patterns
+
+Each scraper subclasses `BaseScraper` and implements `get_balance(page) -> str`. Two shared helpers in `scrapers/base.py` cover the most common platform patterns:
+
+| Helper | Used by | How it works |
+|---|---|---|
+| `get_new_shopify_credit(page, base_url)` | Realm Hoppers, EA Collectibles | Navigate `/account` → follow redirect to `shopify.com/{id}/account` → go to `/account/profile` → find `img[alt="storecredit"]`, walk up DOM to the `$XX.XX` span |
+| `get_binder_credit(page)` | — (base helper) | Click `#binderpos-open-credit`, then poll `page.frames` for `.creditAmount > span` |
+
+Mana Lounge (`manalounge.py`) uses its own inline BinderPOS flow because the SSO handoff (`?sso=silent`) requires navigating to the store root before clicking the widget. Players C&C (`playerscandc.py`) is a fully custom platform — it simply waits for `span.credit` on `/account`.
 
 ### Adding a new store
 
@@ -212,4 +232,17 @@ store-credit-aggregator/
 2. Register it in `scrapers/__init__.py` (`STORE_NAMES`, `BASE_URLS`, `_SCRAPER_CLASSES`).
 3. Add its key to `STORE_ORDER` in `cli.py`.
 
-If the store uses Shopify's new customer accounts, use `get_new_shopify_credit` from `scrapers/base.py`. If it uses a BinderPOS widget, refer to `scrapers/manalounge.py`.
+Use `get_new_shopify_credit` for new Shopify customer accounts, inline BinderPOS logic (see `manalounge.py`) for BinderPOS stores, or write a custom scraper for other platforms.
+
+### Debugging a failing store
+
+`diagnose.py` navigates to each store (Realm Hoppers, EA Collectibles, Mana Lounge — not Players C&C), waits 8 seconds for scripts to inject, then dumps:
+
+- All element IDs (visible/hidden)
+- All dollar amounts found in text nodes
+- Shadow DOM matches for credit/binder/loyalty/point keywords
+- All iframe contents
+
+```bash
+python diagnose.py
+```
